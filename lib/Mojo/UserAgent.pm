@@ -4,6 +4,7 @@ use Mojo::Base 'Mojo::EventEmitter';
 # "Fry: Since when is the Internet about robbing people of their privacy?
 #  Bender: August 6, 1991."
 use Mojo::Channel::HTTP::Client;
+use Mojo::Channel::WebSocket::Client;
 use Mojo::IOLoop;
 use Mojo::Util qw(monkey_patch term_escape);
 use Mojo::UserAgent::CookieJar;
@@ -240,8 +241,11 @@ sub _finish {
   if (my $new = $self->transactor->upgrade($old)) {
     weaken $self;
     $new->on(resume => sub { $self->_write($id) });
-    $c->{cb}($self, $c->tx($new)->tx);
-    return $new->client_read($old->res->content->leftovers);
+    my $cb = $c->{cb};
+    $c = $self->{connections}{$id}
+      = Mojo::Channel::WebSocket::Client->new(ioloop => $c->ioloop, tx => $new);
+    $cb->($self, $new);
+    return $c->read($old->res->content->leftovers);
   }
 
   # Finish normal connection and handle redirects
@@ -258,7 +262,7 @@ sub _read {
 
   # Process incoming data
   warn term_escape "-- Client <<< Server (@{[_url($tx)]})\n$chunk\n" if DEBUG;
-  $tx->client_read($chunk);
+  $c->read($chunk);
   if    ($tx->is_finished) { $self->_finish($id) }
   elsif ($tx->is_writing)  { $self->_write($id) }
 }
